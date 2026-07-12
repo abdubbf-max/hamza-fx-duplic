@@ -1,2 +1,5 @@
 ﻿node_modules/
 config.json
+session_string.txt
+session_backup.txt
+session_renewed.flag
