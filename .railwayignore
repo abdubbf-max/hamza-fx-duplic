@@ -1,0 +1,9 @@
+﻿*.bat
+config.json
+README*
+LANCER*
+*.md
+session_backup.txt
+renew.js
+setup.js
+listchats.js
