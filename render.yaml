@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: hamza-fx-duplic
+    runtime: node
+    buildCommand: npm install
+    startCommand: node main.js
+    plan: free
+    envVars:
+      - key: API_ID
+        value: "29085473"
+      - key: API_HASH
+        value: "8c0e47a32b2e6896d7fb7458e9af0f58"
+      - key: SOURCE_ID
+        value: "-1003907847043"
+      - key: DEST_ID
+        value: "-1002666839220"

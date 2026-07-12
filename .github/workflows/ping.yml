@@ -1,0 +1,11 @@
+name: Keep Alive
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping service
+        run: curl -sf ${{ secrets.RENDER_URL }} -o /dev/null && echo "OK" || echo "unreachable"
