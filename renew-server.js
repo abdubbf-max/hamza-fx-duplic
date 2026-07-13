@@ -315,4 +315,14 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
   const warn = PIN === '0000' ? ' ⚠️  Défaut — ajoute RENEW_PIN dans Railway !' : '';
   console.log(`🌐 Renew UI actif → port ${PORT}${warn}`);
+
+  // Auto-ping toutes les 14 min pour empêcher Render de dormir
+  const selfUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  const _ping = selfUrl.startsWith('https') ? require('https') : require('http');
+  setInterval(() => {
+    _ping.get(selfUrl, res => {
+      res.resume();
+      console.log(`🏓 Keep-alive → ${res.statusCode}`);
+    }).on('error', () => {});
+  }, 14 * 60 * 1000);
 });
