@@ -47,6 +47,31 @@ function saveSession(client) {
   }
 }
 
+let _lastSavedSession = '';
+async function persistSessionToRender(session) {
+  const svcId  = process.env.RENDER_SERVICE_ID || '';
+  const apiKey = process.env.RENDER_API_KEY    || '';
+  if (!svcId || !apiKey || session === _lastSavedSession) return;
+  try {
+    const existing = await axios.get(
+      `https://api.render.com/v1/services/${svcId}/env-vars`,
+      { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' } }
+    );
+    const vars = (existing.data || []).map(e => e.envVar || e);
+    const idx  = vars.findIndex(v => v.key === 'SESSION');
+    if (idx >= 0) vars[idx].value = session; else vars.push({ key: 'SESSION', value: session });
+    await axios.put(
+      `https://api.render.com/v1/services/${svcId}/env-vars`,
+      vars,
+      { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' } }
+    );
+    _lastSavedSession = session;
+    console.log('💾 Session sauvegardée dans Render');
+  } catch (e) {
+    console.log('⚠️ persistSessionToRender:', e.response?.data?.message || e.message);
+  }
+}
+
 async function botSend(method, params) {
   return axios.post(`${BOT_URL}/${method}`, params).then(r => r.data).catch(e => {
     console.log('❌ botSend', method, e.response?.data?.description || e.message);
@@ -222,11 +247,15 @@ async function sendAlbum(client, msgs) {
     // Sauvegarder la session à jour dans le volume
     saveSession(client);
 
+    // Sauvegarde initiale de la session dans Render
+    await persistSessionToRender(client.session.save()).catch(() => {});
+
     // Watchdog : vérifie la connexion toutes les 60s
     setInterval(async () => {
       try {
         await client.getMe();
-        saveSession(client); // met à jour la session sauvegardée
+        saveSession(client);
+        await persistSessionToRender(client.session.save()).catch(() => {});
       } catch (e) {
         const msg = e.errorMessage || e.message || '';
         console.log('💀 Connexion morte :', msg);
