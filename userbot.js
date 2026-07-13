@@ -37,6 +37,27 @@ if (!BOT_TOKEN)              { console.log('❌ TOKEN manquant.');              
 
 const BOT_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+const ALERT_FLAG = './last_alert.txt';
+const ALERT_COOLDOWN = 6 * 60 * 60 * 1000; // 6h
+function canSendAlert() {
+  try {
+    const ts = parseInt(fs.readFileSync(ALERT_FLAG, 'utf8').trim());
+    if (Date.now() - ts < ALERT_COOLDOWN) return false;
+  } catch {}
+  return true;
+}
+function markAlertSent() {
+  try { fs.writeFileSync(ALERT_FLAG, String(Date.now())); } catch {}
+}
+async function sendExpiredAlert() {
+  if (!canSendAlert()) { console.log('⏳ Alerte session déjà envoyée récemment, skip.'); return; }
+  markAlertSent();
+  await botSend('sendMessage', {
+    chat_id: DEST_ID,
+    text: '⚠️ Session userbot expirée. Va sur le renew-server pour reconnecter.'
+  }).catch(() => {});
+}
+
 function saveSession(client) {
   try {
     const dir = '/data';
@@ -261,10 +282,7 @@ async function sendAlbum(client, msgs) {
         console.log('💀 Connexion morte :', msg);
         if (/AUTH_KEY|SESSION_REVOKED|UNAUTHORIZED|UNREGISTERED/i.test(msg)) {
           console.log('⚠️ Session révoquée — envoi alerte SHAFX...');
-          await botSend('sendMessage', {
-            chat_id: DEST_ID,
-            text: '⚠️ Session userbot expirée. Relance node setup.js et envoie la nouvelle SESSION.'
-          }).catch(() => {});
+          await sendExpiredAlert();
         }
         process.exit(1);
       }
@@ -297,10 +315,7 @@ async function sendAlbum(client, msgs) {
     const msg = err.errorMessage || err.message || '';
     if (/AUTH_KEY|UNREGISTERED|401/i.test(msg) || err.code === 401) {
       console.log('🔑 SESSION expirée au démarrage — envoi alerte...');
-      await botSend('sendMessage', {
-        chat_id: DEST_ID,
-        text: '⚠️ Session userbot expirée. Relance node setup.js et envoie la nouvelle SESSION.'
-      }).catch(() => {});
+      await sendExpiredAlert();
     }
     throw err;
   }
