@@ -160,9 +160,14 @@ async function copy(client, msg) {
       } else if (className === 'MessageMediaDocument') {
         const mime = msg.media.document?.mimeType || 'application/octet-stream';
         const ext  = mime.split('/')[1] || 'bin';
+        const isSticker = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeSticker');
         const isAnim = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeAnimated');
 
-        if (isAnim) {
+        if (isSticker) {
+          fd.append('sticker', buf, { filename: `sticker.${ext}`, contentType: mime, knownLength: buf.length });
+          await axios.post(`${BOT_URL}/sendSticker`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
+          type = '🌟 sticker';
+        } else if (isAnim) {
           fd.append('animation', buf, { filename: 'anim.mp4', contentType: 'video/mp4', knownLength: buf.length });
           await axios.post(`${BOT_URL}/sendAnimation`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
           type = '🎞️ anim';
