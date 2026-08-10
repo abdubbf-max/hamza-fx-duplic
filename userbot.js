@@ -50,12 +50,8 @@ function markAlertSent() {
   try { fs.writeFileSync(ALERT_FLAG, String(Date.now())); } catch {}
 }
 async function sendExpiredAlert() {
-  if (!canSendAlert()) { console.log('⏳ Alerte session déjà envoyée récemment, skip.'); return; }
-  markAlertSent();
-  await botSend('sendMessage', {
-    chat_id: DEST_ID,
-    text: '⚠️ Session userbot expirée. Va sur le renew-server pour reconnecter.'
-  }).catch(() => {});
+  // désactivé : plus d'envoi de message dans SHAFX, vérif manuelle uniquement
+  console.log('⚠️ Session userbot expirée (pas de message envoyé, vérif manuelle).');
 }
 
 function saveSession(client) {
@@ -177,6 +173,13 @@ async function copy(client, msg) {
           type = '📷 photo';
         } else if (mime.startsWith('video/')) {
           fd.append('video', buf, { filename: `video.${ext}`, contentType: mime, knownLength: buf.length });
+          const vAttr = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
+          if (vAttr) {
+            if (vAttr.w) fd.append('width', String(vAttr.w));
+            if (vAttr.h) fd.append('height', String(vAttr.h));
+            if (vAttr.duration) fd.append('duration', String(Math.round(vAttr.duration)));
+            fd.append('supports_streaming', 'true');
+          }
           await axios.post(`${BOT_URL}/sendVideo`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
           type = '🎥 vidéo';
         } else if (mime.startsWith('audio/')) {
@@ -212,16 +215,20 @@ async function sendAlbum(client, msgs) {
     const buf = await client.downloadMedia(msg, {});
     if (!buf) return null;
     const cls  = msg.media.className || '';
-    let type = null, mime = 'image/jpeg';
+    let type = null, mime = 'image/jpeg', vAttr = null;
     if (cls === 'MessageMediaPhoto') {
       type = 'photo';
     } else if (cls === 'MessageMediaDocument') {
       mime = msg.media.document?.mimeType || 'application/octet-stream';
-      if (mime.startsWith('image/'))      type = 'photo';
-      else if (mime.startsWith('video/')) type = 'video';
+      if (mime.startsWith('image/')) {
+        type = 'photo';
+      } else if (mime.startsWith('video/')) {
+        type = 'video';
+        vAttr = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
+      }
     }
     if (!type) return null;
-    return { type, buf, mime, ext: mime.split('/')[1] || 'bin', caption: msg.message || '', entities: msg.entities };
+    return { type, buf, mime, ext: mime.split('/')[1] || 'bin', caption: msg.message || '', entities: msg.entities, vAttr };
   }));
   const valid = items.filter(Boolean);
   if (!valid.length) return;
@@ -232,6 +239,12 @@ async function sendAlbum(client, msgs) {
     const it = valid[0];
     if (it.caption) fd.append('caption', it.caption);
     fd.append(it.type, it.buf, { filename: `media.${it.ext}`, contentType: it.mime, knownLength: it.buf.length });
+    if (it.type === 'video' && it.vAttr) {
+      if (it.vAttr.w) fd.append('width', String(it.vAttr.w));
+      if (it.vAttr.h) fd.append('height', String(it.vAttr.h));
+      if (it.vAttr.duration) fd.append('duration', String(Math.round(it.vAttr.duration)));
+      fd.append('supports_streaming', 'true');
+    }
     const method = it.type === 'photo' ? 'sendPhoto' : 'sendVideo';
     await axios.post(`${BOT_URL}/${method}`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
   } else {
@@ -239,6 +252,12 @@ async function sendAlbum(client, msgs) {
       const name = `f${i}`;
       fd.append(name, it.buf, { filename: `${it.type}${i}.${it.ext}`, contentType: it.mime, knownLength: it.buf.length });
       const entry = { type: it.type, media: `attach://${name}` };
+      if (it.type === 'video' && it.vAttr) {
+        if (it.vAttr.w) entry.width = it.vAttr.w;
+        if (it.vAttr.h) entry.height = it.vAttr.h;
+        if (it.vAttr.duration) entry.duration = Math.round(it.vAttr.duration);
+        entry.supports_streaming = true;
+      }
       if (i === 0 && it.caption) {
         entry.caption = it.caption;
         const ce = toApiEntities(it.entities);
