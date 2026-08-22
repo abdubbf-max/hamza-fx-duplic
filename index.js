@@ -1,4 +1,4 @@
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const fs = require('fs');
 
 let cfg = { token: '' };
@@ -6,6 +6,12 @@ if (fs.existsSync('./config.json')) cfg = JSON.parse(fs.readFileSync('./config.j
 
 const TOKEN    = process.env.TOKEN || cfg.token;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || cfg.admin_id || '0');
+// SHAFX = DEST_ID (déjà utilisé par les routes de copie ci-dessous) — le bot y est admin.
+// SUPRÊME n'accepte aucun bot : jamais posté automatiquement, seulement donné à copier/coller.
+const SHAFX_ID = parseInt(process.env.DEST_ID || cfg.dest_id || '0');
+// Liste blanche pour les boutons de signal (vide = ouvert à tous, comme le reste du bot).
+const SIGNAL_ALLOWED_IDS = (process.env.SIGNAL_ALLOWED_IDS || '')
+  .split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
 
 if (!TOKEN || TOKEN === 'METS_TON_TOKEN_ICI') { console.log('❌ Token manquant'); process.exit(1); }
 
@@ -77,6 +83,48 @@ bot.command('list', ctx => {
   ctx.reply('📋 Routes actives :\n' + lines, { parse_mode: 'Markdown' });
 });
 
+// ── Boutons de signal (pour l'ami) ────────────────────────────────────────────
+// SHAFX : posté automatiquement par le bot (déjà admin là-bas).
+// SUPRÊME : jamais touché par le bot — juste renvoyé en copiable, à coller à la main.
+const SIGNAL_TEXTS = {
+  sig_buy:        'BUY XAUUSD NOW',
+  sig_sell:       'SELL XAUUSD NOW',
+  sig_be:         'METTEZ VOUS BE',
+  sig_close_high: 'CLOTUREZ LES POSITIONS HAUTES ET LAISSEZ TOURNER LES BASSES EN LES METTANT BE',
+  sig_close_low:  'CLOTUREZ LES POSITIONS BASSES ET LAISSEZ TOURNER LES HAUTES EN LES METTANT BE',
+};
+
+function isSignalAllowed(ctx) {
+  return !SIGNAL_ALLOWED_IDS.length || SIGNAL_ALLOWED_IDS.includes(ctx.from?.id);
+}
+
+const signalKeyboard = Markup.inlineKeyboard([
+  [Markup.button.callback('🟢 BUY XAUUSD', 'sig_buy'), Markup.button.callback('🔴 SELL XAUUSD', 'sig_sell')],
+  [Markup.button.callback('🛡️ BE', 'sig_be')],
+  [Markup.button.callback('⬆️ Clôture hautes (BUY)', 'sig_close_high')],
+  [Markup.button.callback('⬇️ Clôture basses (SELL)', 'sig_close_low')],
+]);
+
+bot.command('signal', ctx => {
+  if (!isSignalAllowed(ctx)) return;
+  ctx.reply('📡 Panneau de signal', signalKeyboard);
+});
+
+for (const key of Object.keys(SIGNAL_TEXTS)) {
+  bot.action(key, async ctx => {
+    if (!isSignalAllowed(ctx)) return ctx.answerCbQuery();
+    const text = SIGNAL_TEXTS[key];
+    try {
+      await bot.telegram.sendMessage(SHAFX_ID, text);
+      await ctx.answerCbQuery('Envoyé dans SHAFX ✅');
+    } catch (e) {
+      await ctx.answerCbQuery('❌ Échec SHAFX', { show_alert: true });
+      console.log('❌ signal → SHAFX :', e.message);
+    }
+    await ctx.reply('📋 Colle ça dans SUPRÊME :\n\n`' + text + '`', { parse_mode: 'Markdown' });
+  });
+}
+
 // ── Copie des messages ────────────────────────────────────────────────────────
 const copy = async (msg) => {
   const route = routes.find(r => r.src === msg.chat.id);
@@ -114,7 +162,7 @@ const copy = async (msg) => {
 bot.on('message',      ctx => copy(ctx.message));
 bot.on('channel_post', ctx => copy(ctx.channelPost));
 
-bot.launch({ allowedUpdates: ['message', 'channel_post'] });
+bot.launch({ allowedUpdates: ['message', 'channel_post', 'callback_query'] });
 console.log('✅ HAMZA FX lancé — ' + routes.length + ' route(s) active(s)');
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
