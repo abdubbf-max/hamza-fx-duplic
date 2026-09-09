@@ -90,7 +90,14 @@ async function persistSessionToRender(session) {
 }
 
 async function botSend(method, params) {
-  return axios.post(`${BOT_URL}/${method}`, params).then(r => r.data).catch(e => {
+  return axios.post(`${BOT_URL}/${method}`, params).then(r => {
+    if (params.entities && params.entities.some(e => e.type === 'custom_emoji')) {
+      const sentEnts = r.data?.result?.entities || [];
+      console.log('🔎 DEBUG custom_emoji envoyé:', JSON.stringify(params.entities));
+      console.log('🔎 DEBUG custom_emoji retourné par Telegram:', JSON.stringify(sentEnts));
+    }
+    return r.data;
+  }).catch(e => {
     console.log('❌ botSend', method, e.response?.data?.description || e.message);
   });
 }
@@ -125,6 +132,9 @@ async function copy(client, msg) {
   const h = new Date().toLocaleTimeString('fr-FR');
   try {
     if (msg.message && !msg.media) {
+      if (msg.entities && msg.entities.some(e => e.className === 'MessageEntityCustomEmoji')) {
+        console.log('🔎 DEBUG entities source (custom emoji detecté):', JSON.stringify(msg.entities.map(e => ({ className: e.className, offset: e.offset, length: e.length, documentId: e.documentId?.toString?.() }))));
+      }
       const params = { chat_id: DEST_ID, text: msg.message };
       const ents = toApiEntities(msg.entities);
       if (ents) params.entities = ents;
