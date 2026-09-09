@@ -121,14 +121,20 @@ function toApiEntities(entities) {
   return out.length ? out : null;
 }
 
+let _destEntity = null;
+async function getDestEntity(client) {
+  if (!_destEntity) _destEntity = await client.getEntity(DEST_ID);
+  return _destEntity;
+}
+
 async function copy(client, msg) {
   const h = new Date().toLocaleTimeString('fr-FR');
   try {
     if (msg.message && !msg.media) {
-      const params = { chat_id: DEST_ID, text: msg.message };
-      const ents = toApiEntities(msg.entities);
-      if (ents) params.entities = ents;
-      await botSend('sendMessage', params);
+      // Envoye depuis le compte (Premium) et non le bot : un bot ne peut pas
+      // faire apparaitre un emoji personnalise anime, Telegram le retire silencieusement.
+      const dest = await getDestEntity(client);
+      await client.sendMessage(dest, { message: msg.message, formattingEntities: msg.entities || [] });
       console.log('[' + h + '] ✉️ texte →', DEST_ID);
 
     } else if (msg.media) {
