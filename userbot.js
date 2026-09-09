@@ -90,14 +90,7 @@ async function persistSessionToRender(session) {
 }
 
 async function botSend(method, params) {
-  return axios.post(`${BOT_URL}/${method}`, params).then(r => {
-    if (params.entities && params.entities.some(e => e.type === 'custom_emoji')) {
-      const sentEnts = r.data?.result?.entities || [];
-      console.log('🔎 DEBUG custom_emoji envoyé:', JSON.stringify(params.entities));
-      console.log('🔎 DEBUG custom_emoji retourné par Telegram:', JSON.stringify(sentEnts));
-    }
-    return r.data;
-  }).catch(e => {
+  return axios.post(`${BOT_URL}/${method}`, params).then(r => r.data).catch(e => {
     console.log('❌ botSend', method, e.response?.data?.description || e.message);
   });
 }
@@ -132,9 +125,6 @@ async function copy(client, msg) {
   const h = new Date().toLocaleTimeString('fr-FR');
   try {
     if (msg.message && !msg.media) {
-      if (msg.entities && msg.entities.some(e => e.className === 'MessageEntityCustomEmoji')) {
-        console.log('🔎 DEBUG entities source (custom emoji detecté):', JSON.stringify(msg.entities.map(e => ({ className: e.className, offset: e.offset, length: e.length, documentId: e.documentId?.toString?.() }))));
-      }
       const params = { chat_id: DEST_ID, text: msg.message };
       const ents = toApiEntities(msg.entities);
       if (ents) params.entities = ents;
@@ -214,22 +204,6 @@ async function copy(client, msg) {
     console.log('[' + h + '] ❌ ERREUR :', detail);
   }
 }
-
-// --- TEMPORAIRE : test emoji anime, a retirer apres diagnostic ---
-const TEST_SOURCE_ID = -5387377648;
-const TEST_DEST_ID   = -5058443090;
-async function copyToTestDest(msg) {
-  if (!msg.message) return;
-  const h = new Date().toLocaleTimeString('fr-FR');
-  console.log('🧪 TEST message recu:', JSON.stringify(msg.message));
-  console.log('🧪 TEST entities brutes:', JSON.stringify((msg.entities || []).map(e => ({ className: e.className, offset: e.offset, length: e.length, documentId: e.documentId?.toString?.() }))));
-  const ents = toApiEntities(msg.entities);
-  const params = { chat_id: TEST_DEST_ID, text: msg.message };
-  if (ents) params.entities = ents;
-  await botSend('sendMessage', params);
-  console.log('[' + h + '] 🧪 TEST texte →', TEST_DEST_ID);
-}
-// --- FIN TEMPORAIRE ---
 
 const pendingGroups = new Map();
 
@@ -337,13 +311,6 @@ async function sendAlbum(client, msgs) {
         process.exit(1);
       }
     }, 60_000);
-
-    client.addEventHandler(
-      async event => {
-        await copyToTestDest(event.message).catch(e => console.log('🧪 TEST erreur:', e.message));
-      },
-      new NewMessage({ chats: [TEST_SOURCE_ID] })
-    );
 
     client.addEventHandler(
       async event => {
