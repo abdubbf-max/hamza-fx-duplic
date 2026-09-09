@@ -211,19 +211,6 @@ async function copy(client, msg) {
   }
 }
 
-// --- TEMPORAIRE : test sur canaux de demo, a retirer apres validation ---
-const TEST_SOURCE_ID = -5387377648;
-const TEST_DEST_ID   = -5058443090;
-let _testDestEntity = null;
-async function copyToTestDest(client, msg) {
-  if (!msg.message) return;
-  const h = new Date().toLocaleTimeString('fr-FR');
-  if (!_testDestEntity) _testDestEntity = await client.getEntity(TEST_DEST_ID);
-  await client.sendMessage(_testDestEntity, { message: msg.message, formattingEntities: msg.entities || [] });
-  console.log('[' + h + '] 🧪 TEST texte (via compte) →', TEST_DEST_ID);
-}
-// --- FIN TEMPORAIRE ---
-
 const pendingGroups = new Map();
 
 async function sendAlbum(client, msgs) {
@@ -330,13 +317,6 @@ async function sendAlbum(client, msgs) {
         process.exit(1);
       }
     }, 60_000);
-
-    client.addEventHandler(
-      async event => {
-        await copyToTestDest(client, event.message).catch(e => console.log('🧪 TEST erreur:', e.message));
-      },
-      new NewMessage({ chats: [TEST_SOURCE_ID] })
-    );
 
     client.addEventHandler(
       async event => {
