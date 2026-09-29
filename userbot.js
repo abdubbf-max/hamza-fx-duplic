@@ -2,7 +2,6 @@ const { TelegramClient } = require('telegram');
 const { StringSession }  = require('telegram/sessions');
 const { NewMessage }     = require('telegram/events');
 const axios              = require('axios');
-const FormData           = require('form-data');
 const fs                 = require('fs');
 
 const cfg = fs.existsSync('./config.json') ? JSON.parse(fs.readFileSync('./config.json', 'utf8')) : {};
@@ -11,7 +10,6 @@ const API_ID    = parseInt(process.env.API_ID    || cfg.api_id    || '2040');
 const API_HASH  =          process.env.API_HASH  || cfg.api_hash  || 'b18441a1ff607e10a989891a5462e627';
 const SOURCE_ID = parseInt(process.env.SOURCE_ID || cfg.source_id || 0);
 const DEST_ID   = parseInt(process.env.DEST_ID   || cfg.dest_id   || 0);
-const BOT_TOKEN =          process.env.TOKEN     || cfg.token     || '';
 
 // Session persistante : volume Railway → fichier local → variable d'env
 const SESSION_PATH  = '/data/session.txt';
@@ -33,9 +31,6 @@ if (!API_ID || !API_HASH || !sessionStr) {
   process.exit(1);
 }
 if (!SOURCE_ID || !DEST_ID) { console.log('❌ SOURCE_ID ou DEST_ID manquant.'); process.exit(1); }
-if (!BOT_TOKEN)              { console.log('❌ TOKEN manquant.');                process.exit(1); }
-
-const BOT_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 const ALERT_FLAG = './last_alert.txt';
 const ALERT_COOLDOWN = 6 * 60 * 60 * 1000; // 6h
@@ -89,38 +84,6 @@ async function persistSessionToRender(session) {
   }
 }
 
-async function botSend(method, params) {
-  return axios.post(`${BOT_URL}/${method}`, params).then(r => r.data).catch(e => {
-    console.log('❌ botSend', method, e.response?.data?.description || e.message);
-  });
-}
-
-const ENTITY_TYPE = {
-  MessageEntityBold: 'bold', MessageEntityItalic: 'italic',
-  MessageEntityUnderline: 'underline', MessageEntityStrike: 'strikethrough',
-  MessageEntityCode: 'code', MessageEntityPre: 'pre',
-  MessageEntityUrl: 'url', MessageEntityEmail: 'email',
-  MessageEntityTextUrl: 'text_link', MessageEntityMention: 'mention',
-  MessageEntityHashtag: 'hashtag', MessageEntityBotCommand: 'bot_command',
-  MessageEntityCustomEmoji: 'custom_emoji', MessageEntitySpoiler: 'spoiler',
-  MessageEntityBlockquote: 'blockquote',
-};
-
-function toApiEntities(entities) {
-  if (!entities || !entities.length) return null;
-  const out = [];
-  for (const e of entities) {
-    const type = ENTITY_TYPE[e.className];
-    if (!type) continue;
-    const entry = { type, offset: e.offset, length: e.length };
-    if (type === 'text_link')    entry.url = e.url;
-    if (type === 'pre')          entry.language = e.language || '';
-    if (type === 'custom_emoji') entry.custom_emoji_id = String(e.documentId);
-    out.push(entry);
-  }
-  return out.length ? out : null;
-}
-
 let _destEntity = null;
 async function getDestEntity(client) {
   if (!_destEntity) _destEntity = await client.getEntity(DEST_ID);
@@ -138,72 +101,30 @@ async function copy(client, msg) {
       console.log('[' + h + '] ✉️ texte →', DEST_ID);
 
     } else if (msg.media) {
-      const buf = await client.downloadMedia(msg, {});
-      if (!buf) {
-        await botSend('sendMessage', { chat_id: DEST_ID, text: msg.message || '[media non téléchargeable]' });
-        console.log('[' + h + '] ⚠️ media vide, texte envoyé');
-        return;
-      }
+      // Envoye depuis le compte (Premium), pas le bot : preserve aussi les
+      // emojis animes dans les legendes photo/video (memes raisons que le texte).
+      // On passe msg.media tel quel (pas de download/reupload) : Telegram copie
+      // le fichier cote serveur via le compte qui vient de le lire.
+      const dest = await getDestEntity(client);
+      const attrs = msg.media.document?.attributes || [];
+      const isSticker = attrs.find(a => a.className === 'DocumentAttributeSticker');
+      const isAnim    = attrs.find(a => a.className === 'DocumentAttributeAnimated');
+      const mime = msg.media.document?.mimeType || '';
+      const type = msg.media.className === 'MessageMediaPhoto' ? '📷 photo'
+        : isSticker ? '🌟 sticker'
+        : isAnim ? '🎞️ anim'
+        : mime.startsWith('video/') ? '🎥 vidéo'
+        : mime.startsWith('audio/') ? '🎵 audio'
+        : mime.startsWith('image/') ? '📷 photo'
+        : '📄 document';
 
-      const fd = new FormData();
-      fd.append('chat_id', String(DEST_ID));
-      if (msg.message) fd.append('caption', msg.message);
-      const captEnts = toApiEntities(msg.entities);
-      if (captEnts) fd.append('caption_entities', JSON.stringify(captEnts));
+      await client.sendFile(dest, {
+        file: msg.media,
+        caption: msg.message || '',
+        formattingEntities: msg.entities || [],
+      });
 
-      const className = msg.media.className || '';
-      let type = 'inconnu';
-
-      if (className === 'MessageMediaPhoto') {
-        fd.append('photo', buf, { filename: 'photo.jpg', contentType: 'image/jpeg', knownLength: buf.length });
-        await axios.post(`${BOT_URL}/sendPhoto`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-        type = '📷 photo';
-
-      } else if (className === 'MessageMediaDocument') {
-        const mime = msg.media.document?.mimeType || 'application/octet-stream';
-        const ext  = mime.split('/')[1] || 'bin';
-        const isSticker = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeSticker');
-        const isAnim = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeAnimated');
-
-        if (isSticker) {
-          fd.append('sticker', buf, { filename: `sticker.${ext}`, contentType: mime, knownLength: buf.length });
-          await axios.post(`${BOT_URL}/sendSticker`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '🌟 sticker';
-        } else if (isAnim) {
-          fd.append('animation', buf, { filename: 'anim.mp4', contentType: 'video/mp4', knownLength: buf.length });
-          await axios.post(`${BOT_URL}/sendAnimation`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '🎞️ anim';
-        } else if (mime.startsWith('image/')) {
-          fd.append('photo', buf, { filename: `photo.${ext}`, contentType: mime, knownLength: buf.length });
-          await axios.post(`${BOT_URL}/sendPhoto`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '📷 photo';
-        } else if (mime.startsWith('video/')) {
-          fd.append('video', buf, { filename: `video.${ext}`, contentType: mime, knownLength: buf.length });
-          const vAttr = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
-          if (vAttr) {
-            if (vAttr.w) fd.append('width', String(vAttr.w));
-            if (vAttr.h) fd.append('height', String(vAttr.h));
-            if (vAttr.duration) fd.append('duration', String(Math.round(vAttr.duration)));
-            fd.append('supports_streaming', 'true');
-          }
-          await axios.post(`${BOT_URL}/sendVideo`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '🎥 vidéo';
-        } else if (mime.startsWith('audio/')) {
-          fd.append('audio', buf, { filename: `audio.${ext}`, contentType: mime, knownLength: buf.length });
-          await axios.post(`${BOT_URL}/sendAudio`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '🎵 audio';
-        } else {
-          fd.append('document', buf, { filename: `file.${ext}`, contentType: mime, knownLength: buf.length });
-          await axios.post(`${BOT_URL}/sendDocument`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-          type = '📄 document';
-        }
-      } else {
-        fd.append('document', buf, { filename: 'file', contentType: 'application/octet-stream', knownLength: buf.length });
-        await axios.post(`${BOT_URL}/sendDocument`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-        type = '📎 fichier';
-      }
-
-      console.log('[' + h + '] ' + type + ' →', DEST_ID, buf.length + ' octets');
+      console.log('[' + h + '] ' + type + ' →', DEST_ID);
     }
   } catch (e) {
     const detail = e.response?.data?.description || e.message;
@@ -216,64 +137,16 @@ const pendingGroups = new Map();
 async function sendAlbum(client, msgs) {
   const h = new Date().toLocaleTimeString('fr-FR');
   msgs.sort((a, b) => a.id - b.id);
-  const items = await Promise.all(msgs.map(async (msg) => {
-    if (!msg.media) return null;
-    const buf = await client.downloadMedia(msg, {});
-    if (!buf) return null;
-    const cls  = msg.media.className || '';
-    let type = null, mime = 'image/jpeg', vAttr = null;
-    if (cls === 'MessageMediaPhoto') {
-      type = 'photo';
-    } else if (cls === 'MessageMediaDocument') {
-      mime = msg.media.document?.mimeType || 'application/octet-stream';
-      if (mime.startsWith('image/')) {
-        type = 'photo';
-      } else if (mime.startsWith('video/')) {
-        type = 'video';
-        vAttr = msg.media.document?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
-      }
-    }
-    if (!type) return null;
-    return { type, buf, mime, ext: mime.split('/')[1] || 'bin', caption: msg.message || '', entities: msg.entities, vAttr };
-  }));
-  const valid = items.filter(Boolean);
+  const valid = msgs.filter(m => m.media);
   if (!valid.length) return;
 
-  const fd = new FormData();
-  fd.append('chat_id', String(DEST_ID));
-  if (valid.length === 1) {
-    const it = valid[0];
-    if (it.caption) fd.append('caption', it.caption);
-    fd.append(it.type, it.buf, { filename: `media.${it.ext}`, contentType: it.mime, knownLength: it.buf.length });
-    if (it.type === 'video' && it.vAttr) {
-      if (it.vAttr.w) fd.append('width', String(it.vAttr.w));
-      if (it.vAttr.h) fd.append('height', String(it.vAttr.h));
-      if (it.vAttr.duration) fd.append('duration', String(Math.round(it.vAttr.duration)));
-      fd.append('supports_streaming', 'true');
-    }
-    const method = it.type === 'photo' ? 'sendPhoto' : 'sendVideo';
-    await axios.post(`${BOT_URL}/${method}`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-  } else {
-    const mediaArr = valid.map((it, i) => {
-      const name = `f${i}`;
-      fd.append(name, it.buf, { filename: `${it.type}${i}.${it.ext}`, contentType: it.mime, knownLength: it.buf.length });
-      const entry = { type: it.type, media: `attach://${name}` };
-      if (it.type === 'video' && it.vAttr) {
-        if (it.vAttr.w) entry.width = it.vAttr.w;
-        if (it.vAttr.h) entry.height = it.vAttr.h;
-        if (it.vAttr.duration) entry.duration = Math.round(it.vAttr.duration);
-        entry.supports_streaming = true;
-      }
-      if (i === 0 && it.caption) {
-        entry.caption = it.caption;
-        const ce = toApiEntities(it.entities);
-        if (ce) entry.caption_entities = ce;
-      }
-      return entry;
-    });
-    fd.append('media', JSON.stringify(mediaArr));
-    await axios.post(`${BOT_URL}/sendMediaGroup`, fd, { headers: fd.getHeaders(), maxBodyLength: Infinity });
-  }
+  const dest = await getDestEntity(client);
+  const first = valid.find(m => m.message) || valid[0];
+  await client.sendFile(dest, {
+    file: valid.map(m => m.media),
+    caption: first.message || '',
+    formattingEntities: first.entities || [],
+  });
   console.log(`[${h}] 🖼️ album (${valid.length}) → ${DEST_ID}`);
 }
 
